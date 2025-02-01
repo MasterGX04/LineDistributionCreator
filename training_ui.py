@@ -171,7 +171,7 @@ def main():
                 if selectedGroup == "Back":
                     break
                 
-                extractSong(selectedGroup)
+                # extractSong(selectedGroup)
                 break
         # end while
 #end main

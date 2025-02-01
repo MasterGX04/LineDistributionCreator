@@ -4,7 +4,7 @@ import os
 from matplotlib import font_manager
 
 class LyricBox:
-    def __init__(self, canvas, parent, memberName, koreanLyric, romanization, englishTrans, startChunk, language, isAdLib=False):
+    def __init__(self, canvas, parent, memberName, koreanLyric, romanization, englishTrans, startChunk, language, isAdLib=False, adLibDuration=0):
         self.canvas = canvas
         self.parent = parent
         self.memberName = memberName
@@ -12,6 +12,9 @@ class LyricBox:
         self.romanization = romanization
         self.englishTrans = englishTrans
         self.startChunk = startChunk
+        self.isAdLib = isAdLib  # New flag for ad-libs
+        self.adLibDuration = adLibDuration 
+        
         self.photoY = 0
         
         self.memberPhotos = self.loadMemberPhotos(self.memberName)
@@ -41,7 +44,10 @@ class LyricBox:
         self.lyricsPadding = 5
         self.addLyricDuration = 7
         
-        self.createLyricDisplay()
+        if isAdLib:
+            self.createAdLibDisplay()
+        else:
+            self.createLyricDisplay()
     
     def loadMemberPhotos(self, memberNames):
         """Load profile images for each member in a multi-member lyric."""
@@ -94,6 +100,54 @@ class LyricBox:
         
         self.animateExistingLyrics(chunkIndex, newY)
         
+    def animateAdLibPosition(self):
+        """Animates ad-lib from bottom → mid-screen → disappear."""
+        canvasWidth = self.canvas.winfo_width()
+        canvasHeight = self.canvas.winfo_height()
+        
+        x = canvasWidth - 10
+        y = canvasHeight
+        padding = 5
+        self.totalHeight = 0
+        self.textItemOffsets = []
+        
+        # Display Ad-Lib Text
+        textId = self.canvas.create_text(
+            x, y, text=self.koreanLyric if self.language == 'Korean' else self.englishTrans,
+            font=self.font, fill=self.memberColors[0], anchor="ne", state="normal"  # Align top-right
+        )
+        self.textItems.append(textId)
+        self.textItemOffsets.append((textId, y))
+        
+        textHeight = self._getItemHeight(textId)
+        self.totalHeight += textHeight + padding
+        
+        self.animateAdLibPosition(
+            startY=canvasHeight,
+            midY=canvasHeight / 2,
+            endY=self.totalHeight,
+            startChunk=self.startChunk,
+            duration=self.adLibDuration
+        )
+    
+    def animateAdLibLibPosition(self, startY, midY, endY, startChunk, duration):
+        """Animates ad-lib from bottom → mid-screen → disappear."""
+        fadeDuration = duration if duration > 0 else 10
+        
+        self.animations.append({
+            "startChunk": startChunk,
+            "endChunk": startChunk + fadeDuration,
+            "frames":{}
+        })
+        
+        canvasHeight = self.canvas.winfo_height()
+        
+        for chunk in range(startChunk, startChunk + fadeDuration // 2):
+            progress = (chunk - startChunk) / (fadeDuration // 2)
+            interpolatedY = round(startY - progress * (startY - midY), 1)
+            self.animations[-1]["frames"][chunk] = max(0, min(interpolatedY, canvasHeight))
+        
+    
     def createLyricDisplay(self):
         """Create a visual representation of the lyric box on the canvas."""
         x, y = 760 * self.parent.scaleX, 10 * self.parent.scaleY  # Adjust positioning (Needs to be updated)

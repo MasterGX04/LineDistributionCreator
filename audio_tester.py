@@ -521,6 +521,7 @@ class VoiceDetectionApp:
         self.initializePositions()
         
     def initializePositions(self):
+        """Initializes the positions each member should be at for a specific chunk index"""
         for currentChunk in range(len(self.chunks)):
             for trackItem in self.memberImages.values():
                 if currentChunk < len(self.chunks) - 4:
@@ -1188,7 +1189,6 @@ class VoiceDetectionApp:
                     if previousPositions.get(startChunk) != yPos:
                         lyricBox.setPosition(yPos)
 
-            
     def updateCanvasForCurrentPosition(self, chunkIndex):
         """Highlight the corresponding member's image if their voice matches the current time."""
         membersCurrentlySinging = set()
@@ -1214,10 +1214,6 @@ class VoiceDetectionApp:
                 
         self.canvas.update()
     # end
-    
-    def onProgressBarPress(self, event):
-        """Set manual update flag when user starts interacting with the progress bar."""
-        self.isManualUpdate = True
     
     # Fix conflict with onDragHandle
     def onProgressBarRelease(self, event):
@@ -1424,34 +1420,12 @@ class VoiceDetectionApp:
                     marker = self.canvas.create_line(x, y - 20, x, y, fill="red", width=4)
                     self.endPointMarkers[chunkIndex] = marker
     # end drawMarkers
-        
-    def updatePlaybackPosition(self):
-        """Periodically update progress bar handle during playback"""
-        if self.isPlaying and not self.isPaused:
-            # Get the current playback position in milliseconds
-            playbackTime = self.playbackOffset + pygame.mixer.music.get_pos()
-
-            # Update the handle position
-            self.updateProgressBarHandle(playbackTime)
-
-            # Update displayed time
-            self.updateDisplayedTime(playbackTime)
-
-            # Schedule the next update
-            self.root.after(50, self.chunk_duration)
-            
+    
     def updateCurrentTime(self, newTimeMs):
         """Update the current time based on the progress bar value."""
         if not self.isManualUpdate: return
         
         self.playbackOffset = newTimeMs
-        # self.currentChunkIndex = int(newTimeMs / self.chunk_duration)
-        # print(f"Manual update to chunk index: {self.currentChunkIndex}, Time: {newTimeMs} ms")
-        
-        # if not self.isPaused:
-        #     pygame.mixer.music.stop()
-        #     pygame.mixer.music.play(start=newTimeMs / 1000)
-        #     self.updatePlaybackPosition()
         
         self.skipNextAutoUpdate = True
         self.updateDisplayedTime(newTimeMs)
