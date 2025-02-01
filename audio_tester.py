@@ -155,13 +155,22 @@ class VoiceDetectionApp:
         if hasattr(self.progressBarHandle, "handle"):
             self.canvas.itemconfig(self.progressBarHandle.handle, state=newState)
         
-        self.progressBarCanvas.itemconfig("all", state=newState)
+        if hasattr(self, "progressBarCanvas"):
+            if self.uiHidden:
+                self.progressBarCanvas.place_forget()  # Hides the canvas
+            else:
+                self.progressBarCanvas.place(relx=0.5, rely=0.9, anchor="center")  # Restores the canvas
         
         # Hide/Show Time Markers
         self.canvas.itemconfig("time_marker", state=newState)
         
         if hasattr(self, "timeDisplayLabel"):
-            self.timeDisplayLabel.config(state=newState)
+            if self.uiHidden:
+                self.timeDisplayLabel.place_forget()  # Hides the label
+            else:
+                self.timeDisplayLabel.place(relx=0.5, rely=0.85, anchor="center")
+                
+        self.zoomManager.toggleZoomUI()
     
     def addBackgroundImage(self):
         memberImage = next(iter(self.memberImages.values()))
@@ -721,6 +730,9 @@ class VoiceDetectionApp:
                     
     def drawTimeMarkers(self):
         """Draw time markers for current section"""
+        if hasattr(self, "uiHidden") and self.uiHidden:
+            return  # Skip drawing if UI is hidden
+        
         self.canvas.delete("time_marker")
         
         visibleDuration = self.zoomManager.currentChunksInView * self.chunk_duration

@@ -41,6 +41,8 @@ class ZoomManager:
         
         self.zoomInLabel = tk.Label(self.zoomFrame, text="+", fg="white", bg="black", font=("Arial", 14))
         self.zoomInLabel.pack(side="left", padx=5)
+        
+        self.zoomHidden = False
 
     def updateZoomLevel(self, newZoom):
         """Update the zoom level and adjust the visible range of the progress bar."""
@@ -59,6 +61,15 @@ class ZoomManager:
         # Update progress bar range
         
         self.parent.drawTimeMarkers()
+        
+    def toggleZoomUI(self):
+        """Toggle visibility of the zoom UI elements."""
+        self.zoomHidden = not self.zoomHidden  # Toggle state
+
+        if self.zoomHidden:
+            self.zoomFrame.place_forget()  # Hide frame and all elements
+        else:
+            self.zoomFrame.place(relx=1, rely=1, anchor="se")  # Restore position
         
     
     def onZoomChange(self, newZoom):
@@ -85,9 +96,10 @@ class ProgressBarHandle:
     
     def move(self, x, rootSectionIndex):
         """Move the progress bar handle to the specified x position."""
+        newState = "hidden" if self.parent.uiHidden else "normal"
         # print(f"Root section index: {rootSectionIndex}, current SI: {self.currentSectionIndex}")
         if rootSectionIndex == self.currentSectionIndex:
-            self.canvas.itemconfig(self.handle, state="normal")
+            self.canvas.itemconfig(self.handle, state=newState)
             x = max(0, min(x, self.progressBarWidth))  # Ensure x is within bounds
             self.canvas.coords(self.handle, x - self.handleWidth / 2, 0, x + self.handleWidth / 2, 20)
         else:
