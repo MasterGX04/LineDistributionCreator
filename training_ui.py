@@ -4,7 +4,7 @@ import sys
 from audio_tester import loadMemberImages, loadModel, VoiceDetectionApp
 import tkinter as tk
 from voice_training import voiceTrainingMain
-from audio_processing import extractSong
+# from audio_processing import extractSong
 
 groups = {
     "IVE": [{'name': 'Gaeul', 'color': '#0000ff'}, {'name': 'Yujin', 'color': '#ff00ff'}, {'name': 'Rei', 'color': '#65bd2b'}, {'name': 'Wonyoung', 'color': '#ff0000'}, {'name': 'Liz', 'color': '#00c3f5'}, {'name': 'Leeseo', 'color': '#aa9f00'}],

@@ -11,7 +11,6 @@ from pydub.utils import make_chunks
 from TrackItem import TrackItem
 from voice_training import extractFeatures
 import pygame
-from rl_agent import RLSSingerRecogAgent
 from VideoTrack import VideoTrackItem
 from navigation_arrows import NavigationArrows
 import json
