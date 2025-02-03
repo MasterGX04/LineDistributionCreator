@@ -3,18 +3,20 @@ import os
 import numpy as np
 import time
 import threading
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ImageGrab
 import tkinter as tk
 from tkinter import ttk, messagebox
 from pydub import AudioSegment
 from pydub.utils import make_chunks
 from TrackItem import TrackItem
 from voice_training import extractFeatures
+import numpy as np
 import pygame
 from VideoTrack import VideoTrackItem
 from navigation_arrows import NavigationArrows
 import json
 import codecs
+import cv2
 from lyrics_box import LyricBox
 from zoom_functions import ZoomManager, ProgressBarHandle, ProgressBarNavigator
 
@@ -112,8 +114,8 @@ class VoiceDetectionApp:
         self.timeDisplayLabel = tk.Label(self.canvas, textvariable=self.timeDisplayVar, bg="black", fg="white", font=("Arial", 12))
         self.timeDisplayLabel.place(relx=0.5, rely=0.85, anchor="center")
         
+        self.progressBarCanvas.bind("<ButtonPress-1>", self.onProgressBarClick)
         self.progressBarCanvas.bind("<B1-Motion>", self.onDragHandle)    
-        self.progressBarCanvas.bind("<ButtonPress-1>", self.onProgressBarPress)
         self.progressBarCanvas.bind("<ButtonRelease-1>", self.onProgressBarRelease)
         
         self.progressBarHandle = ProgressBarHandle(self.progressBarCanvas, self, self.progressBarWidth, self.chunk_duration)
@@ -121,7 +123,7 @@ class VoiceDetectionApp:
         # Initialize VideoTrack
         videoPath = f"./training_data/{self.selectedGroup}/{os.path.basename(self.testSongPath).replace('.mp3', '.mp4')}"
         if os.path.exists(videoPath):
-            self.videoTrackItem = VideoTrackItem(self.canvas, videoPath, scale=100, scaleX=self.scaleX, position=(0,0), baseHeight=720)
+            self.videoTrackItem = VideoTrackItem(self.canvas, self, videoPath, scale=100, scaleX=self.scaleX, position=(0,0), baseHeight=720)
         
         self.labels = self.loadSavedLabels() # Store labels (member, start, end)
         self.root.after(50, self.initializeMemberImages)
@@ -139,6 +141,8 @@ class VoiceDetectionApp:
         self.root.after(50, self.initializeArrows)
         self.uiHidden = False
         self.root.bind("<Control-h>", self.toggleUIElements)
+        self.root.bind("<Control-r>", self.createVideo)
+        self.root.bind("<Control-t>", self.createThumbnail)
     # end init
     
     def toggleUIElements(self, event=None):
@@ -171,6 +175,35 @@ class VoiceDetectionApp:
                 
         self.zoomManager.toggleZoomUI()
     
+    def createVideo(self, event):
+        print("Video record function called!")
+        if hasattr(self, "videoTrackItem"):
+            self.toggleUIElements()
+            self.videoTrackItem.processVideoAndSave()
+            
+    def createThumbnail(self, event):
+        print("Thumbnail function called!")
+        if hasattr(self.videoTrackItem, "videoFrameId"):
+            self.canvas.delete(self.videoTrackItem.videoFrameId)
+        if hasattr(self, "lyricsBackgroundId"):
+            self.canvas.delete(self.lyricsBackgroundId)
+            
+        basePath = self.testSongPath.rsplit('\\', 1)[0]
+        thumbnailImagePath = os.path.join(basePath, "background.jpg")
+        
+        try:
+            thumbnailImage = Image.open(thumbnailImagePath)
+            thumbnailImage = thumbnailImage.resize((1280, 720), Image.Resampling.LANCZOS)
+            thumbnailTk = ImageTk.PhotoImage(thumbnailImage)
+            
+            self.thumbnailId = self.canvas.create_image(0, 0, anchor="nw", image=thumbnailTk)
+            self.canvas.tag_lower(self.thumbnailId)
+            self.thumbnailTk = thumbnailTk    
+        except FileNotFoundError:
+            print(f"Error: {thumbnailImagePath} not found.")     
+            
+        self.hideAllLyrics()
+    
     def addBackgroundImage(self):
         memberImage = next(iter(self.memberImages.values()))
         basePath = self.testSongPath.rsplit('\\', 1)[0]  # Remove everything after the last '\'
@@ -187,7 +220,8 @@ class VoiceDetectionApp:
                     x, y, anchor="nw", image=whiteImageTk
                 ) 
                 
-                self.lyricsBackgroundId = whiteImageTk
+                self.whiteImageTk = whiteImageTk
+
                 self.canvas.tag_raise(self.lyricsBackgroundId)
             except FileNotFoundError:
                 print(f"Error: {whiteImagePath} not found.")
@@ -1161,6 +1195,11 @@ class VoiceDetectionApp:
         
         # print('Lyric positions:', self.lyricPositions)
         
+    def hideAllLyrics(self):
+        """Hides all lyric box objects stored in self.lyrics."""
+        for chunkIndex, lyricBox in self.lyrics.items():
+            lyricBox.hide()    
+        
     def renderLyrics(self, chunkIndex):
         """Render lyrics based on the most recent chunkIndex if the exact one is missing."""
         if chunkIndex not in self.lyricPositions:
@@ -1214,6 +1253,9 @@ class VoiceDetectionApp:
                 
         self.canvas.update()
     # end
+    
+    def onProgressBarClick(self, event):
+        self.isManualUpdate = True
     
     # Fix conflict with onDragHandle
     def onProgressBarRelease(self, event):

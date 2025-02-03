@@ -211,8 +211,6 @@ class TrackItem:
 
             # Fill in time for chunks outside the active ranges
             self.timeline[chunkIndex] = lastTime
-            
-        # print(f"Last time for {self.trackMember}: {self.lastUpdateChunk}")
               
     def setImageId(self, imageId):
         self.imageId = imageId
@@ -285,40 +283,40 @@ class TrackItem:
         Draw the timer text at the appropriate position.
         :param draw: ImageDraw instance for drawing text
         """
+        if chunkIndex == len(self.parent.chunks): return
         self.setPositionFromTimeline(chunkIndex)
-            
-        if self.timeline[chunkIndex] > 0.0:
-            timerText = f"{self.timeline[chunkIndex]:.1f}"
-            # print(f"Timer text: {timerText}")
-            
-            textWidth = self.font.measure(timerText)
-            
-            # Update timer canvas dimensions
-            scaledHeight = int(50 * (self.timerScale / 100) * self.parent.scaleY)
-            scaledWidth = int(textWidth * (self.timerScale / 100) * self.parent.scaleX)
-            # print(f"Scaled height: {scaledHeight}, Scaled width: {scaledWidth}")
-            
-            self.timerCanvasWidth = scaledWidth
-            self.timerCanvasHeight = scaledHeight
-            
-            x, y = self.parent.canvas.coords(self.imageId)
-            # Update timer position to align the top-right corner
-            self.timerX = x + self.xOffset
-            self.timerY = y - (15 * self.parent.scaleX)
-            
-            # print(f"Timer x: {self.timerX}, Timer y: {self.timerY}")
-            
-            if hasattr(self, "timerTextId") and self.timerTextId:
-                self.parent.canvas.delete(self.timerTextId)
-            
-            self.timerTextId = self.parent.canvas.create_text(
-                round(self.timerX),
-                round(self.timerY),
-                text=timerText,
-                font=self.font,
-                fill="white",
-                anchor="ne"  # Anchor the text to the right (east)
-            )
+          
+        timerText = f"{self.timeline[chunkIndex]:.1f}" if self.timeline[chunkIndex] > 0.0 else ''
+        # print(f"Timer text: {timerText}")
+        
+        textWidth = self.font.measure(timerText)
+        
+        # Update timer canvas dimensions
+        scaledHeight = int(50 * (self.timerScale / 100) * self.parent.scaleY)
+        scaledWidth = int(textWidth * (self.timerScale / 100) * self.parent.scaleX)
+        # print(f"Scaled height: {scaledHeight}, Scaled width: {scaledWidth}")
+        
+        self.timerCanvasWidth = scaledWidth
+        self.timerCanvasHeight = scaledHeight
+        
+        x, y = self.parent.canvas.coords(self.imageId)
+        # Update timer position to align the top-right corner
+        self.timerX = x + self.xOffset
+        self.timerY = y - (15 * self.parent.scaleX)
+        
+        # print(f"Timer x: {self.timerX}, Timer y: {self.timerY}")
+        
+        if hasattr(self, "timerTextId") and self.timerTextId:
+            self.parent.canvas.delete(self.timerTextId)
+        
+        self.timerTextId = self.parent.canvas.create_text(
+            round(self.timerX),
+            round(self.timerY),
+            text=timerText,
+            font=self.font,
+            fill="white",
+            anchor="ne"  # Anchor the text to the right (east)
+        )
             
     def setPositionFromTimeline(self, currentChunk):
         """
@@ -331,7 +329,7 @@ class TrackItem:
             
     def updateAndDrawTimer(self, chunkIndex):
         """
-        Update the timer and draw it if the current image key is 'light'.
+        Update the timer and draw it if the app is not paused.
         """
     
         if not self.parent.isPaused:

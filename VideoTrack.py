@@ -2,15 +2,22 @@ import tkinter as tk
 from tkinter import ttk
 import cv2
 import time
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ImageGrab
+import io
 import threading
 from TrackItem import TrackItem
+import numpy as np
+import os
+import subprocess
+from tqdm import tqdm
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 class VideoTrackItem(TrackItem):
-    def __init__(self, canvas, videoPath, scale=100, scaleX=1.0, position=(0,0), baseHeight=720):
+    def __init__(self, canvas, parent, videoPath, scale=100, scaleX=1.0, position=(0,0), baseHeight=720):
         super().__init__(scale, position, sourceImages={}, animations=[], type="video")
         self.canvas = canvas
         self.videoPath = videoPath
+        self.parent = parent
         self.cap = cv2.VideoCapture(videoPath)
         self.scale = scale
         self.scaleX = scaleX
@@ -72,18 +79,19 @@ class VideoTrackItem(TrackItem):
         if fps <= 0:
             raise ValueError("Invalid FPS detected in video file.")
 
-        frameDuration = 1 / fps  # Duration of each frame in seconds
+        frameDuration = 1000 / fps  # Duration of each frame in ms
         lastFrameTime = time.time()
         
         while self.isPlaying and self.cap.isOpened():
             if self.isPaused:
-                time.sleep(0.2)  # Wait briefly while paused
+                time.sleep(0.02)  # Wait briefly while paused
                 lastFrameTime = time.time() 
                 continue
             
             ret, frame = self.cap.read()
             if not ret:
                 break
+            
             frame = cv2.resize(frame, (self.newWidth, self.newHeight))
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             img = ImageTk.PhotoImage(image=Image.fromarray(frame))
@@ -98,10 +106,10 @@ class VideoTrackItem(TrackItem):
             self.canvas.image = img
             self.canvas.coords(self.videoFrameId, self.position[0], self.position[1])
             self.canvas.update()
-
-            # Control frame rate
+            
+            # Maintain FPS
             elapsedTime = time.time() - lastFrameTime
-            sleepTime = max(0, frameDuration - elapsedTime)
+            sleepTime = max(0, (frameDuration / 1000) - elapsedTime)
             time.sleep(sleepTime)
             lastFrameTime = time.time()
         self.isPlaying = False
@@ -116,3 +124,149 @@ class VideoTrackItem(TrackItem):
         if fps > 0:
             frameIndex = int((timeMs / 1000.0) * fps)
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, frameIndex)
+    
+    def captureCanvas(self, canvas):
+        canvas.update()
+
+        x = canvas.winfo_rootx()
+        y = canvas.winfo_rooty()
+        width = canvas.winfo_width()
+        height = canvas.winfo_height()
+        #print(f"X: {x}, y: {y}, width: {width}, height: {height}")
+
+        img = ImageGrab.grab(bbox=(x, y, x + width, y + height)).convert("RGBA")
+
+        return img
+        
+    def processFrame(self, frame, currentTimeMs, currentChunkIndex):
+        """Process a single frame: overlay Tkinter canvas and update chunkIndex if needed"""
+        newChunkIndex = int(currentTimeMs / self.parent.chunk_duration)
+
+        # Update the canvas **only if chunkIndex changes**
+        if newChunkIndex != currentChunkIndex:
+            self.parent.updateCanvasForCurrentPosition(newChunkIndex)
+            currentChunkIndex = newChunkIndex        
+        
+        self.setPosition()
+        video_x, video_y = int(self.position[0]), int(self.position[1])
+        
+        if hasattr(self, "videoFrameId") and self.videoFrameId:
+            self.parent.canvas.delete(self.videoFrameId)
+        
+        frame = cv2.resize(frame, (self.newWidth, self.newHeight))
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        img = ImageTk.PhotoImage(image=Image.fromarray(frame))
+        self.videoFrameId = self.canvas.create_image(video_x, video_y, image=img, anchor="nw")
+        self.canvas.tag_lower(self.videoFrameId)
+            
+        self.canvas.coords(self.videoFrameId, video_x, video_y)
+        videoFrame = self.captureCanvas(self.canvas)
+
+        finalFrame = np.array(videoFrame.convert("RGB"), dtype=np.uint8)
+        if finalFrame.any():
+            return finalFrame, currentChunkIndex
+        else:
+            print("⚠️ Warning: Empty frame detected. Skipping.")
+            return None, currentChunkIndex
+
+    def processVideoAndSave(self, outputPath="LineDistribution.mp4"):
+        """Extract each frame from the video, update the canvas, and save to MP4"""
+        self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)  # Reset video to start
+        fps = self.cap.get(cv2.CAP_PROP_FPS)
+        frameDuration = 1000 / fps  # Each frame's duration in milliseconds
+        width = self.canvas.winfo_width()
+        height = self.canvas.winfo_height()
+
+        totalFrames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        print(f"Total Frames in Video: {totalFrames}")
+    
+        currentChunkIndex = -1
+        frameIndex = 0
+        audioPath = self.parent.testSongPath
+        
+        # Initialize progress bar
+        progressBar = tqdm(total=totalFrames, desc="Processing Video", unit="frame", leave=True, position=0, dynamic_ncols=True)
+        self.parent.isPaused = False
+        
+        framesList = [None] * totalFrames
+        try:
+            while self.cap.isOpened():
+                ret, frame = self.cap.read()
+                if not ret:
+                    break  # Stop when video ends
+
+                currentTimeMs = int(frameIndex * frameDuration)
+                
+                # if currentChunkIndex >= 150:
+                #     print(f"Stopping at chunk {currentChunkIndex} (2nd-to-last chunk)")
+                #     break
+
+                try:
+                    # Process frame and update canvas accordingly
+                    finalFrame, currentChunkIndex = self.processFrame(frame, currentTimeMs, currentChunkIndex)
+
+                    framesList[frameIndex] = finalFrame
+                    # # Ensure finalFrame is valid before saving
+                    # if finalFrame is not None and finalFrame.any() and currentChunkIndex < 50:
+                    #     # Save the frame as an image (chunkIndex.png)
+                    #     imagePath = os.path.join(imageDir, f"{frameIndex}.png")
+                    #     Image.fromarray(finalFrame).save(imagePath)
+                    # else:
+                    #     print(f"⚠️ Skipping frame {currentTimeMs}: finalFrame is invalid")
+
+                except Exception as e:
+                    print(f"⚠️ Error processing frame at {currentTimeMs}ms: {e}")
+
+                progressBar.update(1)  # Update progress bar
+                frameIndex += 1
+        
+        except Exception as e:
+            print(f"\n⚠️ Error during video processing: {e}")
+            print("Saving current progress and adding audio...")
+
+        finally:
+            # Release resources even if an error occurs
+            self.cap.release()
+            progressBar.close()
+            print("Video processing complete. Adding audio...")
+    
+        tempVideoPath = "temp_video.mp4"
+        self.compileFramesToMP4(tempVideoPath, framesList, fps, width, height)
+        self.addAudioToVideo(tempVideoPath, audioPath, totalFrames, fps, outputPath)
+        os.remove(tempVideoPath)
+
+    # WORKS!!!!! ADD MULTITHREADING!!
+    def compileFramesToMP4(self, tempVideoPath, framesList, fps, width, height):
+        """Compile all stored frames into an MP4 video"""
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        out = cv2.VideoWriter(tempVideoPath, fourcc, fps, (width, height))
+
+        print("🛠️ Compiling frames into MP4...")
+
+        for i, frame in enumerate(framesList):
+            if frame is not None:
+                # Ensure correct size
+                frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
+                # Write to video
+                out.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+
+        out.release()
+        print(f"✅ Video frames compiled into {tempVideoPath}")
+        
+    def addAudioToVideo(self, videoPath, audioPath, totalFrames, fps, outputPath):
+        """Merge final Mp4 with audio"""
+        chunkDurationSec = self.parent.chunk_duration / 1000
+        subprocess.run([
+                    "ffmpeg",
+                    "-i", videoPath,  # Input video (without audio)
+                    "-i", audioPath,  # Input audio
+                    "-c:v", "libx264",  # Encode video properly
+                    "-preset", "fast",  # Speed up encoding
+                    "-crf", "23",  # Maintain quality
+                    "-pix_fmt", "yuv420p",
+                    "-c:a", "aac",  # Encode audio with AAC
+                    "-strict", "experimental",  # Ensure compatibility
+                    "-shortest",  # Trim to shortest stream (avoid extra silence)
+                    "-t", str(totalFrames / fps - chunkDurationSec),  # Trim audio 1 chunk shorter
+                    outputPath  # Output file
+                ], check=True)

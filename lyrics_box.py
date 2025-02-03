@@ -83,8 +83,9 @@ class LyricBox:
         
         # Check if there exists a lyric at this chunk index
         if len(self.parent.lyricPositions[chunkIndex]) > 0:
+            numMembers = 1 if isinstance(self.memberName, str) else len(self.memberNAme)
             additionalHeight = max(
-                self.photoY + self.lyricsPadding + 10, self.totalHeight + self.lyricsPadding
+                (self.photoY) * numMembers + self.lyricsPadding + 10, self.totalHeight + self.lyricsPadding
             )
             newY = additionalHeight
         else:
@@ -165,7 +166,7 @@ class LyricBox:
                 photoId = self.canvas.create_image(x, y, image=photo, anchor="nw", state="normal")
                 self.textItems.append(photoId)
                 self.textItemOffsets.append((photoId, self.photoY))
-                if i < len(self.memberPhotos) - 1:
+                if i < len(self.memberPhotos) - 1 or len(self.memberPhotos) == 1:
                     self.photoY += photoHeight - 10
                 # Offset text to the right of the photo
         else:
@@ -272,10 +273,8 @@ class LyricBox:
             
     def hide(self):
         """Hide the lyric box from the canvas."""
-        if self.isVisible:
-            for item in self.textItems:
-                self.canvas.itemconfig(item, state="hidden")
-            self.isVisible = False
+        for item in self.textItems:
+            self.canvas.itemconfig(item, state="hidden")
                  
     def animatePosition(self, startY, endY, startChunk, endChunk):
         """Precompute animation frames and store them per chunkIndex for smoother playback."""
