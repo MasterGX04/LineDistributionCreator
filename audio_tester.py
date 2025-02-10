@@ -18,11 +18,12 @@ import json
 import codecs
 import cv2
 from lyrics_box import LyricBox
+from audio_processing import getSongsFromSameAlbum, segmentAndSaveAudio, convertToWav, getVoiceDetectionArray
 from zoom_functions import ZoomManager, ProgressBarHandle, ProgressBarNavigator
 
 # Load the trained model for a specific member
 def loadModel(group, member):
-    modelPath = f"./{group}/{member}/train/data/{member}_model.h5"
+    modelPath = f"./{group}/{member}/train/data/rl_{member}.h5"
     if os.path.exists(modelPath):
         return tf.keras.models.load_model(modelPath)
     else:
@@ -31,12 +32,21 @@ def loadModel(group, member):
 # End loadModel
     
 # Load images for member
-def loadMemberImages(groupName, members: dict):
+def loadMemberImages(groupName, members: dict, songPath):
     images = {}
+    songsFromSameAlbum = getSongsFromSameAlbum()
+    songName = os.path.splitext(os.path.basename(songPath))[0]
+    albumName = None
+    
+    for album, songs in songsFromSameAlbum[groupName].items():
+        if songName in songs:
+            albumName = album
+            break  # Exit once we find the album
+        
     for memberObject in members:
         memberName = memberObject['name']
-        darkImgPath = f"./group_icons/{groupName}/Dark {memberName}.png"
-        lightImgPath = f"./group_icons/{groupName}/{memberName}.png"
+        darkImgPath = f"./group_icons/{groupName}/{albumName}/Dark {memberName}.png"
+        lightImgPath = f"./group_icons/{groupName}/{albumName}/{memberName}.png"
         
         darkImg = Image.open(darkImgPath)
         lightImg = Image.open(lightImgPath)
@@ -47,7 +57,8 @@ def loadMemberImages(groupName, members: dict):
 # end loadMemberImages
 
 def detectVoiceInSegment(model, segmentFeatures):
-    prediction = model.predict(np.expand_dims(segmentFeatures, axis=0))
+    # print("Segment features:", segmentFeatures)
+    prediction = model.predict(np.expand_dims(segmentFeatures, axis=0))[0]
     return prediction > 0.8
 
 class VoiceDetectionApp:
@@ -98,6 +109,7 @@ class VoiceDetectionApp:
         self.progressBarWidth = int(1280 * 0.75)
         self.scaleX = 1.0
         self.scaleY = 1.0
+        self.testOrVideo = "Video"
 
         self.timeDisplayVar = tk.StringVar(value="00:00:000") # Display time iin MM:SS:milliseconds
         self.zoomManager = ZoomManager(self.canvas, self, None, self.totalDurationMs, self.chunk_duration, pygame)
@@ -124,13 +136,20 @@ class VoiceDetectionApp:
         videoPath = f"./training_data/{self.selectedGroup}/{os.path.basename(self.testSongPath).replace('.mp3', '.mp4')}"
         if os.path.exists(videoPath):
             self.videoTrackItem = VideoTrackItem(self.canvas, self, videoPath, scale=100, scaleX=self.scaleX, position=(0,0), baseHeight=720)
+        else:
+            print(f"No music video in {videoPath}")
+            # self.createThumbnail()
+            videoPath = "./looping_background.mp4"
+            self.videoTrackItem = VideoTrackItem(self.canvas, self, videoPath, scale=100, scaleX=self.scaleX, position=(0,0), baseHeight=720, isMusicVideo=False)
         
         self.labels = self.loadSavedLabels() # Store labels (member, start, end)
-        self.root.after(50, self.initializeMemberImages)
+        self.root.after(100, self.initializeMemberImages)
         self.root.after(100, self.updateElementPositions)
         self.addControls(root)
         self.root.after(100, self.drawTimeMarkers)
         self.root.after(50, self.loadLyricsFromFile)
+        
+        self.voiceDetectionResults = self.setAudioSegments()
         
         self.lastKeyPressTime = 0
         self.updateTimer = 0
@@ -142,8 +161,29 @@ class VoiceDetectionApp:
         self.uiHidden = False
         self.root.bind("<Control-h>", self.toggleUIElements)
         self.root.bind("<Control-r>", self.createVideo)
-        self.root.bind("<Control-t>", self.createThumbnail)
+        self.root.bind("<Control-t>", self.setThumbnail)
+        self.root.bind("<Control-s>", self.resetLabels)
+        self.root.bind("<Control-Shift-B>", self.changeMode)
     # end init
+    
+    def setAudioSegments(self):
+        fileNameWithoutExtension = os.path.splitext(os.path.basename(self.vocalsOnlyPath))[0]
+        songWavPath = f"./training_data/{self.selectedGroup}/{fileNameWithoutExtension}.wav"
+        songChunksDir = f"./training_data/{self.selectedGroup}/{fileNameWithoutExtension}.npy"
+        convertToWav(self.vocalsOnlyPath, songWavPath)
+        
+        audioSegments = segmentAndSaveAudio(songWavPath, songChunksDir, segmentDuration=200)
+        print(f"Shape of first segment: {audioSegments.shape}")
+        voiceDetectionArray = getVoiceDetectionArray(self.model, len(self.chunks), audioSegments)
+        return voiceDetectionArray
+    
+    def resetLabels(self, event):
+        self.labels = self.loadSavedLabels()
+        for trackItem in self.memberImages.values():
+            if trackItem:
+                trackItem.initializeTimeline()
+        
+        self.initializePositions
     
     def toggleUIElements(self, event=None):
         """Toggle visibility of navigation arrows, progress bar handle, progress bar canvas, and time markers."""
@@ -178,16 +218,17 @@ class VoiceDetectionApp:
     def createVideo(self, event):
         print("Video record function called!")
         if hasattr(self, "videoTrackItem"):
+            songNameWithoutExtension = os.path.splitext(os.path.basename(self.testSongPath))[0]
             self.toggleUIElements()
-            self.videoTrackItem.processVideoAndSave()
+            if (self.videoTrackItem.isMusicVideo):
+                self.videoTrackItem.processVideoAndSave(outputPath=songNameWithoutExtension + ".mp4")
+            else:
+                self.videoTrackItem.processVideoAndSave(outputPath=songNameWithoutExtension + ".mp4", fpsCap=30)
+        # else:
+        #     self.toggleUIElements()
             
-    def createThumbnail(self, event):
-        print("Thumbnail function called!")
-        if hasattr(self.videoTrackItem, "videoFrameId"):
-            self.canvas.delete(self.videoTrackItem.videoFrameId)
-        if hasattr(self, "lyricsBackgroundId"):
-            self.canvas.delete(self.lyricsBackgroundId)
             
+    def createThumbnail(self):
         basePath = self.testSongPath.rsplit('\\', 1)[0]
         thumbnailImagePath = os.path.join(basePath, "background.jpg")
         
@@ -202,29 +243,43 @@ class VoiceDetectionApp:
         except FileNotFoundError:
             print(f"Error: {thumbnailImagePath} not found.")     
             
+    def setThumbnail(self, event):
+        print("Thumbnail function called!")
+        if hasattr(self.videoTrackItem, "videoFrameId"):
+            self.canvas.delete(self.videoTrackItem.videoFrameId)
+        if hasattr(self, "lyricsBackgroundId"):
+            self.canvas.delete(self.lyricsBackgroundId)
+            
+        self.createThumbnail()
         self.hideAllLyrics()
+        
+    def changeMode(self, event):
+        if self.testOrVideo == "Test":
+            self.testOrVideo = "Video"
+            print("Mode switched to Video!")
+        elif self.testOrVideo == "Video":
+            self.testOrVideo = "Test"
+            print("Mode switched to Test!")
     
     def addBackgroundImage(self):
-        memberImage = next(iter(self.memberImages.values()))
         basePath = self.testSongPath.rsplit('\\', 1)[0]  # Remove everything after the last '\'
         whiteImagePath = os.path.join(basePath, "White.jpg")
         
-        if memberImage:
-            try:
-                whiteImage = Image.open(whiteImagePath)
-                whiteImageTk = ImageTk.PhotoImage(whiteImage)
-                x = 750 / 1920 * self.baseWidth * self.scaleX
-                y = 0
-                
-                self.lyricsBackgroundId = self.canvas.create_image(
-                    x, y, anchor="nw", image=whiteImageTk
-                ) 
-                
-                self.whiteImageTk = whiteImageTk
+        try:
+            whiteImage = Image.open(whiteImagePath)
+            whiteImageTk = ImageTk.PhotoImage(whiteImage)
+            x = 750 * self.scaleX
+            y = 0
+            
+            self.lyricsBackgroundId = self.canvas.create_image(
+                x, y, anchor="nw", image=whiteImageTk
+            ) 
+            
+            self.whiteImageTk = whiteImageTk
 
-                self.canvas.tag_raise(self.lyricsBackgroundId)
-            except FileNotFoundError:
-                print(f"Error: {whiteImagePath} not found.")
+            self.canvas.tag_raise(self.lyricsBackgroundId)
+        except FileNotFoundError:
+            print(f"Error: {whiteImagePath} not found.")
     
     def moveMarkerLeft(self, event):
         """
@@ -628,7 +683,7 @@ class VoiceDetectionApp:
         
         if not os.path.exists(labelFilePath):
             print(f"No saved labels fround at {labelFilePath}.") 
-            return
+            return []
         
         # Load json file
         try:
@@ -651,7 +706,7 @@ class VoiceDetectionApp:
                 return savedLabels
         except Exception as e:
             print(f"Error loading labels from {labelFilePath}: {e}")
-            return None
+            return []
             
     # end loadSavedLabels        
     
@@ -708,20 +763,6 @@ class VoiceDetectionApp:
 
         # Update the previous x position
         self.previousX = x
-            
-    # Works properly
-    def updateVisibleRange(self, value):
-        """Handle progress bar changes while zoomed in with bar"""
-        value = int(value)
-        totalChunks = len(self.chunks)
-        visibleChunks = self.zoomManager.currentChunksInView
-        
-        startChunk = int((value / 800) * totalChunks)
-        startChunk = min(max(0, startChunk), totalChunks - visibleChunks)
-        
-        self.currentSectionIndex = startChunk
-        self.updateProgressBar()
-        self.updateCurrentTime(value)
     
     # Works properly
     def onDragHandle(self, event):
@@ -1080,9 +1121,9 @@ class VoiceDetectionApp:
             englishTrans = engEntry.get("1.0", "end").strip()
             startChunkValue = int(chunkEntry.get())
             
-            membersData = members if len(members) > 1 else members[0]
+            # membersData = members if len(members) > 1 else members[0]
             
-            lyricBox = LyricBox(self.canvas, self, membersData, koreanLyric, romanization, englishTrans, startChunkValue, langVar.get())
+            lyricBox = LyricBox(self.canvas, self, members, koreanLyric, romanization, englishTrans, startChunkValue, langVar.get())
             self.lyrics[startChunk] = lyricBox
             
             self.lyricPositions = {}
@@ -1162,6 +1203,7 @@ class VoiceDetectionApp:
         
         if not os.path.exists(lyricsFilePath):
             print(f"Lyrics file not found: {lyricsFilePath}")
+            return
         
         try:
             with codecs.open(lyricsFilePath, "r", encoding="utf-8", errors="ignore") as file:
@@ -1169,7 +1211,6 @@ class VoiceDetectionApp:
         except json.JSONDecodeError:
             print(f"Error loading JSON file: {lyricsFilePath}")
             return
-        
 
         for lyric in lyricsData:
             language = lyric["language"]
@@ -1197,7 +1238,7 @@ class VoiceDetectionApp:
         
     def hideAllLyrics(self):
         """Hides all lyric box objects stored in self.lyrics."""
-        for chunkIndex, lyricBox in self.lyrics.items():
+        for _, lyricBox in self.lyrics.items():
             lyricBox.hide()    
         
     def renderLyrics(self, chunkIndex):
@@ -1230,27 +1271,40 @@ class VoiceDetectionApp:
 
     def updateCanvasForCurrentPosition(self, chunkIndex):
         """Highlight the corresponding member's image if their voice matches the current time."""
-        membersCurrentlySinging = set()
-       
-        for member, start, end in self.labels:
-            if start <= chunkIndex <= end:
-                membersCurrentlySinging.add(member)
+        if self.testOrVideo == "Video":
+            membersCurrentlySinging = set()
         
-        # Update canvas for each member
-        for member, trackItem in self.memberImages.items():
-            imageId = self.memberImageIds[member]
-            trackItem.updateAndDrawTimer(chunkIndex)
-            if chunkIndex > trackItem.lastUpdateChunk:
-                trackItem.switchImage("clear")
-            elif member in membersCurrentlySinging:
-                trackItem.switchImage("light")
+            for member, start, end in self.labels:
+                if start <= chunkIndex <= end:
+                    membersCurrentlySinging.add(member)
+            
+            # Update canvas for each member
+            for member, trackItem in self.memberImages.items():
+                imageId = self.memberImageIds[member]
+                trackItem.updateAndDrawTimer(chunkIndex)
+                if chunkIndex > trackItem.lastUpdateChunk:
+                    trackItem.switchImage("clear")
+                elif member in membersCurrentlySinging:
+                    trackItem.switchImage("light")
+                else:
+                    trackItem.switchImage("dark")
+                    
+                self.canvas.itemconfig(imageId, image=trackItem.sourceImages[trackItem.currentImageKey]) 
+            
+            if hasattr(self, "lyricPositions"):  
+                self.renderLyrics(chunkIndex)
+        else:
+            voiceDetected = self.voiceDetectionResults[chunkIndex]
+            imageId = self.memberImageIds[self.trainingMember['name']]
+            memberTrackItem = self.memberImages[self.trainingMember['name']]
+            if voiceDetected == 1:
+                memberTrackItem.switchImage("light")
+                print(f"{self.trainingMember['name']} is singing")
             else:
-                trackItem.switchImage("dark")
-                
-            self.canvas.itemconfig(imageId, image=trackItem.sourceImages[trackItem.currentImageKey]) 
-        
-        self.renderLyrics(chunkIndex)
-                
+                memberTrackItem.switchImage("dark")
+
+            self.canvas.itemconfig(imageId, image=memberTrackItem.sourceImages[memberTrackItem.currentImageKey]) 
+            
         self.canvas.update()
     # end
     
@@ -1343,7 +1397,16 @@ class VoiceDetectionApp:
         
         usedEndIndices = set()
         
+        for label in self.labels:
+            member, labelStart, labelEnd = label
+            if labelStart in sortedStartPoints and labelEnd in sortedEndPoints:
+                matchedPoints.append((member, labelStart, labelEnd))
+                usedEndIndices.add(sortedEndPoints.index(labelEnd))
+        
         for startPoint in sortedStartPoints:
+            if any(startPoint == labelStart for _, labelStart, _ in matchedPoints):
+                continue  # Skip if already matched
+
             closestEndIndex = None
             for i, endPoint in enumerate(sortedEndPoints):
                 if i in usedEndIndices:
@@ -1354,23 +1417,12 @@ class VoiceDetectionApp:
             
             if closestEndIndex is not None:
                 endPoint = sortedEndPoints[closestEndIndex]
-                
-                matchedLabel = None
-                for label in self.labels:
-                    member, labelStart, labelEnd = label
-                    if labelStart == startPoint and labelEnd == endPoint:
-                        matchedLabel = member
-                        break
-                
-                if matchedLabel:
-                    matchedPoints.append((matchedLabel, startPoint, endPoint))
-                else:
-                    matchedPoints.append((None, startPoint, endPoint)) 
-
+                matchedPoints.append((None, startPoint, endPoint))  # No member name found
                 usedEndIndices.add(closestEndIndex)
             else:
                 unmatchedStartPoints.append(startPoint)
-
+                
+        matchedPoints.sort(key=lambda x: x[1])
         # print("Matched points:", matchedPoints)
         return matchedPoints
 
@@ -1506,7 +1558,7 @@ class VoiceDetectionApp:
             if hasattr(self, "videoTrackItem"):
                 self.videoTrackItem.pause()
         
-            print(f"Current chunk index {self.currentChunkIndex}")
+            # print(f"Current chunk index {self.currentChunkIndex}")
             
     def restart(self):
         """Restart playback from the beginning."""
